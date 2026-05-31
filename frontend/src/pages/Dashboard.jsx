@@ -6,8 +6,25 @@ import {
   addToWatchHistory,
   personalizedSearch,
 } from "../services/recommendationService";
+import OnboardingIntentModal from "../components/OnboardingIntentModal";
+import {
+  hasCompletedOnboarding,
+  markOnboardingComplete,
+} from "../services/onboardingService";
 
 // Static chips removed
+
+const STARTER_QUERY_MAP = {
+  focus: "deep focus music",
+  relax: "relaxing background music",
+  workout: "high energy workout playlist",
+  comedy: "funny comedy videos",
+  movies: "movie recommendations for tonight",
+  music: "music for everyday listening",
+  family: "family friendly entertainment",
+  motivation: "motivational videos and music",
+  lateNight: "late night chill music",
+};
 
 const getVisualTone = (item) => {
   const genreMoodText = `${item.genre || ""} ${item.mood || ""}`.toLowerCase();
@@ -235,6 +252,8 @@ function Dashboard() {
   const [hasSearched, setHasSearched] = useState(false);
   const [interpretedPreferences, setInterpretedPreferences] = useState(null);
   const [searchedQuery, setSearchedQuery] = useState("");
+  const [selectedOnboardingIntents, setSelectedOnboardingIntents] = useState([]);
+  const [showOnboarding, setShowOnboarding] = useState(false);
 
   const refreshProfile = async () => {
     clearCachedProfile();
@@ -249,6 +268,15 @@ function Dashboard() {
     (profile.moods || []).length === 0 &&
     (profile.watchHistory || []).length === 0 &&
     (profile.feedbackHistory || []).length === 0;
+
+  useEffect(() => {
+    if (!user?.id || !profile) {
+      return;
+    }
+
+    const shouldShow = isProfileEmpty && !hasCompletedOnboarding(user.id);
+    setShowOnboarding(shouldShow);
+  }, [user?.id, profile, isProfileEmpty]);
 
   const profileChips = profile
     ? [
@@ -331,12 +359,12 @@ function Dashboard() {
     };
   }, []);
 
-  const handleSearch = async () => {
-    const trimmedQuery = search.trim();
+  const runSearch = async (inputQuery, options = {}) => {
+    const trimmedQuery = inputQuery.trim();
 
     if (!trimmedQuery) {
       setError("Enter a search query to get personalized recommendations.");
-      return;
+      return false;
     }
 
     setLoading(true);
@@ -353,12 +381,16 @@ function Dashboard() {
       setProfile(resolvedProfile);
 
       const response = await personalizedSearch(resolvedProfile._id, trimmedQuery);
+      if (options.updateInput !== false) {
+        setSearch(trimmedQuery);
+      }
       setRecommendations(response.recommendations || []);
       setBuiltQuery(response.builtQuery || "");
       setInterpretedPreferences(response.interpretedPreferences || null);
       setSearchedQuery(trimmedQuery);
       setHasSearched(true);
       await refreshProfile();
+      return true;
     } catch (searchError) {
       setRecommendations([]);
       setBuiltQuery("");
@@ -367,15 +399,54 @@ function Dashboard() {
         searchError.response?.data?.message ||
         "We could not fetch recommendations right now."
       );
+      return false;
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleSearch = async () => {
+    await runSearch(search);
   };
 
   const handleChipToggle = (chip) => {
     const nextChip = activeChip === chip ? null : chip;
     setActiveChip(nextChip);
     setSearch(nextChip ? chip : "");
+  };
+
+  const handleToggleOnboardingIntent = (intentId) => {
+    setSelectedOnboardingIntents((current) =>
+      current.includes(intentId)
+        ? current.filter((item) => item !== intentId)
+        : [...current, intentId]
+    );
+  };
+
+  const buildStarterQuery = (intentIds) => {
+    const phrases = [
+      ...new Map(
+        intentIds
+          .map((intentId) => STARTER_QUERY_MAP[intentId])
+          .filter(Boolean)
+          .map((phrase) => [phrase.toLowerCase(), phrase])
+      ).values(),
+    ];
+
+    return phrases.join(" ");
+  };
+
+  const handleCompleteOnboarding = async () => {
+    const starterQuery = buildStarterQuery(selectedOnboardingIntents);
+    const didSearch = await runSearch(starterQuery, { updateInput: true });
+
+    if (!didSearch) {
+      return;
+    }
+
+    markOnboardingComplete(user?.id);
+    setShowOnboarding(false);
+    setSelectedOnboardingIntents([]);
   };
 
   const ensureProfile = async () => {
@@ -441,7 +512,16 @@ function Dashboard() {
   };
 
   return (
-    <div className="space-y-8">
+    <>
+      {showOnboarding && (
+        <OnboardingIntentModal
+          selectedIntents={selectedOnboardingIntents}
+          onToggleIntent={handleToggleOnboardingIntent}
+          onComplete={handleCompleteOnboarding}
+          loading={loading}
+        />
+      )}
+      <div className="space-y-8">
       {/* Redesigned Hero Section (shorter, wider, zero-scroll UX, live recommendations inside) */}
       <section className="overflow-hidden rounded-[32px] border border-white/10 bg-[linear-gradient(135deg,rgba(6,182,212,0.18),rgba(15,23,42,0.92)_42%,rgba(139,92,246,0.18))] p-6 shadow-2xl shadow-black/20 sm:p-8">
         <div className="space-y-6">
@@ -638,7 +718,8 @@ function Dashboard() {
           </div>
         </div>
       </section>
-    </div>
+      </div>
+    </>
   );
 }
 

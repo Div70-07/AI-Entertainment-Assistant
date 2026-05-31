@@ -114,9 +114,8 @@ function Profile() {
             </h1>
             <p className="mt-2 text-sm text-slate-300">{user?.email ?? "-"}</p>
           </div>
-          <div className="grid flex-1 gap-3 sm:grid-cols-3">
+          <div className="grid flex-1 gap-3 sm:grid-cols-2">
             {[
-              { label: "Role", value: user?.role ?? "user" },
               { label: "Feedback Signals", value: String(profile?.feedbackHistory?.length || 0) },
               { label: "Watch Signals", value: String(watchHistory.length) },
             ].map((item) => (

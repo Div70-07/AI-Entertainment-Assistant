@@ -151,16 +151,16 @@ MongoDB Atlas stores:
 
 
 ### Dashboard
-`/screenshots/Screenshot(491).png`
+![Dashboard](./screenshots/dashboard.png)
 
 
 ### Recommendation Flow
+![Recommendation Flow](./screenshots/recommendations.png)
 
-`/screenshots/Screenshot(492).png`
 
 ### Profile & Analytics
+![Profile Analytics](./screenshots/profile.png)
 
-`/screenshots/Screenshot(493).png`
 
 ---
 

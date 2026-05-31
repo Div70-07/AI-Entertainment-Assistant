@@ -2,6 +2,18 @@ const Profile = require("../models/Profile");
 const { generateRecommendations } = require("../services/recommendationService");
 const { interpretWithGemini } = require("../services/geminiService");
 
+const pushUniquePreference = (arr, value) => {
+    if (!value || value === "Unknown") return;
+
+    const exists = arr.some(
+        item => item.toLowerCase() === value.toLowerCase()
+    );
+
+    if (!exists) {
+        arr.push(value);
+    }
+};
+
 const createProfile = async (req, res) => {
 
     try {
@@ -204,7 +216,18 @@ const searchRecommendations = async (req, res) => {
             });
         }
 
-        const preferences = await interpretWithGemini(query);
+        const isAuditEnabled = process.env.DEBUG_SEARCH_AUDIT === "true";
+        if (isAuditEnabled) {
+            console.log("===== SEARCH START =====");
+            console.log("RAW QUERY:", query);
+        }
+
+        const {
+            preferences,
+            rawResponse,
+            fallbackActivated,
+            interpretationSource
+        } = await interpretWithGemini(query);
 
         const recommendationProfile = {
             genres: preferences.genre || [],
@@ -212,7 +235,27 @@ const searchRecommendations = async (req, res) => {
             moods: preferences.mood || []
         };
 
-        const { builtQuery, recommendations } = await generateRecommendations(recommendationProfile, preferences);
+        console.log("RAW_USER_QUERY:", query);
+        console.log("INTERPRETED_OUTPUT:", JSON.stringify(preferences));
+        console.log("GEMINI_CALL_COUNT_PER_SEARCH:", 1);
+        console.log("INTERPRETATION_SOURCE:", interpretationSource);
+
+        const { builtQuery, recommendations } = await generateRecommendations(recommendationProfile, preferences, query);
+
+        if (isAuditEnabled) {
+            console.log("RECOMMENDATION COUNT:", recommendations.length);
+            console.log("---------------- SEARCH PIPELINE AUDIT ----------------");
+            console.log("RAW USER QUERY:      ", query);
+            console.log("INTERPRETED QUERY:   ", preferences.intent);
+            console.log("ACTIVE MODE:         ", (preferences.context && preferences.context.length > 0) ? "context" : "direct");
+            console.log("YOUTUBE QUERY:       ", builtQuery);
+            console.log("RESULT COUNT:        ", recommendations.length);
+            console.log("-------------------------------------------------------");
+            console.log("===== RESPONSE =====");
+            console.log("STATUS SENT TO FRONTEND: 200");
+        }
+
+        console.log("FINAL_RESULT_COUNT:", recommendations.length);
 
         res.status(200).json({
             interpretedPreferences: preferences,
@@ -222,6 +265,11 @@ const searchRecommendations = async (req, res) => {
 
     }
     catch (error) {
+        if (process.env.DEBUG_SEARCH_AUDIT === "true") {
+            console.log("===== RESPONSE =====");
+            console.log("STATUS SENT TO FRONTEND: 500");
+            console.error("Search API Error:", error.message);
+        }
 
         res.status(500).json({
             message: error.message
@@ -266,35 +314,56 @@ const personalizedSearch = async (req, res) => {
 
         }
 
-        const preferences =
-            await interpretWithGemini(query);
+        const isAuditEnabled = process.env.DEBUG_SEARCH_AUDIT === "true";
+        if (isAuditEnabled) {
+            console.log("===== SEARCH START =====");
+            console.log("RAW QUERY:", query);
+        }
 
-        const mergedProfile = {
-            genres: normalizePreferences([
-                ...(preferences.genre || []),
-                ...(profile.genres || []).slice(0, 2)
-            ]),
+        const {
+            preferences,
+            rawResponse,
+            fallbackActivated,
+            interpretationSource
+        } =
+            await interpretWithGemini(query, profile);
 
-            creators: normalizePreferences([
-                ...(preferences.creator || []),
-                ...(profile.creators || []).slice(0, 2)
-            ]),
-
-            moods: normalizePreferences([
-                ...(preferences.mood || []),
-                ...(profile.moods || []).slice(0, 2)
-            ]),
-            watchHistory: profile.watchHistory || [],
-        };
+        console.log("RAW_USER_QUERY:", query);
+        console.log("INTERPRETED_OUTPUT:", JSON.stringify(preferences));
+        console.log("GEMINI_CALL_COUNT_PER_SEARCH:", 1);
+        console.log("INTERPRETATION_SOURCE:", interpretationSource);
 
         const {
             builtQuery,
             recommendations
         } =
             await generateRecommendations(
-                mergedProfile,
-                preferences
+                profile,
+                preferences,
+                query
             );
+
+        if (isAuditEnabled) {
+            console.log("RECOMMENDATION COUNT:", recommendations.length);
+            console.log("---------------- SEARCH PIPELINE AUDIT ----------------");
+            console.log("RAW USER QUERY:      ", query);
+            console.log("INTERPRETED QUERY:   ", preferences.intent);
+            console.log("ACTIVE MODE:         ", (preferences.context && preferences.context.length > 0) ? "context" : "direct");
+            console.log("YOUTUBE QUERY:       ", builtQuery);
+            console.log("RESULT COUNT:        ", recommendations.length);
+            console.log("-------------------------------------------------------");
+            console.log("===== RESPONSE =====");
+            console.log("STATUS SENT TO FRONTEND: 200");
+        }
+
+        console.log("FINAL_RESULT_COUNT:", recommendations.length);
+
+        pushUniquePreference(profile.searchHistory, query);
+        (preferences.genre || []).forEach(g => pushUniquePreference(profile.genres, g));
+        (preferences.creator || []).forEach(c => pushUniquePreference(profile.creators, c));
+        (preferences.mood || []).forEach(m => pushUniquePreference(profile.moods, m));
+
+        await profile.save();
 
         res.status(200).json({
 
@@ -316,6 +385,11 @@ const personalizedSearch = async (req, res) => {
     }
 
     catch (error) {
+        if (process.env.DEBUG_SEARCH_AUDIT === "true") {
+            console.log("===== RESPONSE =====");
+            console.log("STATUS SENT TO FRONTEND: 500");
+            console.error("Personalized Search API Error:", error.message);
+        }
 
         res.status(500).json({
             message: error.message
@@ -356,6 +430,10 @@ const addToWatchHistory = async (req, res) => {
             videoId: req.body.videoId
 
         });
+
+        pushUniquePreference(profile.genres, req.body.genre);
+        pushUniquePreference(profile.creators, req.body.creator);
+        pushUniquePreference(profile.moods, req.body.mood);
 
         await profile.save();
 
@@ -410,9 +488,15 @@ const addFeedback = async (req, res) => {
 
             mood: req.body.mood,
 
-            feedback: req.body.feedback
+            feedback: req.body.feedback || req.body.action,
+
+            action: req.body.action || req.body.feedback
 
         });
+
+        pushUniquePreference(profile.genres, req.body.genre);
+        pushUniquePreference(profile.creators, req.body.creator);
+        pushUniquePreference(profile.moods, req.body.mood);
 
         await profile.save();
 

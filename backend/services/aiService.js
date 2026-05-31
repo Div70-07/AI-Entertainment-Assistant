@@ -11,10 +11,6 @@ const interpretQuery = (query)=>{
         preferences.mood = "Relax";
     }
 
-    if(normalizedQuery.includes("youtube")){
-        preferences.creator = "MrBeast";
-    }
-
     return preferences;
 };
 

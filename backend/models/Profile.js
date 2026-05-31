@@ -59,6 +59,16 @@ feedbackHistory:[{
         ]
     },
 
+    action:{
+        type:String,
+        enum:[
+            "liked",
+            "disliked",
+            "clicked",
+            "skipped"
+        ]
+    },
+
     createdAt:{
         type:Date,
         default:Date.now

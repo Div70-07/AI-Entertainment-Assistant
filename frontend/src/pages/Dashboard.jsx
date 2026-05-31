@@ -1,13 +1,13 @@
 import { useEffect, useState } from "react";
 import { useAuth } from "../context/AuthContext";
-import { resolveProfile } from "../services/profileService";
+import { resolveProfile, clearCachedProfile } from "../services/profileService";
 import {
   addFeedback,
   addToWatchHistory,
   personalizedSearch,
 } from "../services/recommendationService";
 
-const CHIPS = ["Technology", "Gaming", "Funny", "Focus"];
+// Static chips removed
 
 const getVisualTone = (item) => {
   const genreMoodText = `${item.genre || ""} ${item.mood || ""}`.toLowerCase();
@@ -232,6 +232,31 @@ function Dashboard() {
   const [profileLoadError, setProfileLoadError] = useState("");
   const [watchedVideoId, setWatchedVideoId] = useState("");
   const [feedbackVideoId, setFeedbackVideoId] = useState("");
+  const [hasSearched, setHasSearched] = useState(false);
+  const [interpretedPreferences, setInterpretedPreferences] = useState(null);
+  const [searchedQuery, setSearchedQuery] = useState("");
+
+  const refreshProfile = async () => {
+    clearCachedProfile();
+    const latest = await resolveProfile();
+    setProfile(latest);
+  };
+
+  const isProfileEmpty =
+    profile &&
+    (profile.genres || []).length === 0 &&
+    (profile.creators || []).length === 0 &&
+    (profile.moods || []).length === 0 &&
+    (profile.watchHistory || []).length === 0 &&
+    (profile.feedbackHistory || []).length === 0;
+
+  const profileChips = profile
+    ? [
+        ...(profile.genres || []),
+        ...(profile.moods || []),
+        ...(profile.creators || []),
+      ].filter((value, index, self) => value && self.indexOf(value) === index)
+    : [];
 
   const stats = [
     {
@@ -254,24 +279,24 @@ function Dashboard() {
   const profilePulse = [
     {
       label: "Top mood",
-      value: profile?.moods?.[0] || "Not set yet",
+      value: profile?.moods?.[0] || "No mood preferences yet",
       detail: `${profile?.moods?.length || 0} moods saved`,
       tone: "bg-cyan-400",
-      width: profile?.moods?.length ? "w-3/4" : "w-1/6",
+      width: profile?.moods?.length ? "w-3/4" : "w-0",
     },
     {
       label: "Top genre",
-      value: profile?.genres?.[0] || "Not set yet",
+      value: profile?.genres?.[0] || "No saved genres yet",
       detail: `${profile?.genres?.length || 0} genres saved`,
       tone: "bg-violet-400",
-      width: profile?.genres?.length ? "w-2/3" : "w-1/6",
+      width: profile?.genres?.length ? "w-2/3" : "w-0",
     },
     {
       label: "Top creator",
-      value: profile?.creators?.[0] || "Not set yet",
+      value: profile?.creators?.[0] || "No creator preferences yet",
       detail: `${profile?.creators?.length || 0} creators saved`,
       tone: "bg-emerald-400",
-      width: profile?.creators?.length ? "w-1/2" : "w-1/6",
+      width: profile?.creators?.length ? "w-1/2" : "w-0",
     },
   ];
 
@@ -330,9 +355,14 @@ function Dashboard() {
       const response = await personalizedSearch(resolvedProfile._id, trimmedQuery);
       setRecommendations(response.recommendations || []);
       setBuiltQuery(response.builtQuery || "");
+      setInterpretedPreferences(response.interpretedPreferences || null);
+      setSearchedQuery(trimmedQuery);
+      setHasSearched(true);
+      await refreshProfile();
     } catch (searchError) {
       setRecommendations([]);
       setBuiltQuery("");
+      setInterpretedPreferences(null);
       setError(
         searchError.response?.data?.message ||
         "We could not fetch recommendations right now."
@@ -372,12 +402,15 @@ function Dashboard() {
         videoId: item.videoId,
       });
 
+      await refreshProfile();
+
       if (item.videoId) {
         window.open(`https://www.youtube.com/watch?v=${item.videoId}`, "_blank", "noopener,noreferrer");
       }
     } catch (watchError) {
       throw new Error(
-        watchError.response?.data?.message || "Could not save this watch action."
+        watchError.response?.data?.message || "Could not save this watch action.",
+        { cause: watchError }
       );
     } finally {
       setWatchedVideoId("");
@@ -396,9 +429,11 @@ function Dashboard() {
         mood: item.mood,
         feedback: feedbackType,
       });
+      await refreshProfile();
     } catch (feedbackError) {
       throw new Error(
-        feedbackError.response?.data?.message || "Could not save feedback."
+        feedbackError.response?.data?.message || "Could not save feedback.",
+        { cause: feedbackError }
       );
     } finally {
       setFeedbackVideoId("");
@@ -407,20 +442,51 @@ function Dashboard() {
 
   return (
     <div className="space-y-8">
+      {/* Redesigned Hero Section (shorter, wider, zero-scroll UX, live recommendations inside) */}
       <section className="overflow-hidden rounded-[32px] border border-white/10 bg-[linear-gradient(135deg,rgba(6,182,212,0.18),rgba(15,23,42,0.92)_42%,rgba(139,92,246,0.18))] p-6 shadow-2xl shadow-black/20 sm:p-8">
-        <div className="grid gap-8 lg:grid-cols-[1.2fr_0.8fr]">
-          <div>
-            <p className="text-sm font-semibold uppercase tracking-[0.32em] text-cyan-300">
-              Personal Discovery Engine
-            </p>
-            <h1 className="mt-4 max-w-2xl text-4xl font-semibold tracking-tight text-white sm:text-5xl">
-              Welcome back, {user?.name ?? "User"}.
-            </h1>
-            <p className="mt-4 max-w-2xl text-base leading-7 text-slate-300">
-              Search across genres, moods, and creators to surface the next recommendation that actually fits your energy right now.
-            </p>
+        <div className="space-y-6">
+          {/* Title & Query Display */}
+          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.32em] text-cyan-300">
+                Personal Discovery Engine
+              </p>
+              <h1 className="mt-2 text-2xl font-bold tracking-tight text-white sm:text-3xl">
+                Welcome back, {user?.name ?? "User"}.
+              </h1>
+            </div>
+             {hasSearched && (
+              <div className="text-xs text-slate-400 md:text-right flex flex-col md:items-end gap-1">
+                <p>
+                  User Search: <span className="text-slate-200 font-semibold">{searchedQuery}</span>
+                </p>
+                {interpretedPreferences && (
+                  <p>
+                    AI Interpretation:{" "}
+                    <span className="text-cyan-400 font-mono">
+                      {[
+                        ...(interpretedPreferences.genre || []),
+                        ...(interpretedPreferences.mood || []),
+                        ...(interpretedPreferences.emotion || interpretedPreferences.emotionalState || []),
+                        ...(interpretedPreferences.goal || interpretedPreferences.desiredOutcome || []),
+                        ...(interpretedPreferences.context || interpretedPreferences.situation || []),
+                        ...(interpretedPreferences.activity || []),
+                        ...(interpretedPreferences.company || interpretedPreferences.audience || []),
+                        ...(interpretedPreferences.energy || [])
+                      ]
+                        .filter(Boolean)
+                        .map(p => p.charAt(0).toUpperCase() + p.slice(1))
+                        .join(" • ") || "Direct Search"}
+                    </span>
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
 
-            <div className="relative mt-8">
+          {/* Search Input Bar (Near the top of Hero) */}
+          <div className="flex flex-col sm:flex-row gap-3">
+            <div className="relative flex-1">
               <span className="absolute left-4 top-1/2 -translate-y-1/2 text-sm text-slate-500">
                 Search
               </span>
@@ -428,61 +494,103 @@ function Dashboard() {
                 type="text"
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && handleSearch()}
                 placeholder="Try: tense sci-fi from emerging creators"
-                className="w-full rounded-2xl border border-white/10 bg-slate-950/70 py-4 pl-20 pr-4 text-sm text-white placeholder-slate-500 outline-none transition focus:border-cyan-400/50 focus:ring-4 focus:ring-cyan-500/10"
+                className="w-full rounded-2xl border border-white/10 bg-slate-950/70 py-3.5 pl-20 pr-4 text-sm text-white placeholder-slate-500 outline-none transition focus:border-cyan-400/50 focus:ring-4 focus:ring-cyan-500/10"
               />
             </div>
-
-            <div className="mt-4 flex flex-wrap items-center gap-3">
-              <button
-                onClick={handleSearch}
-                disabled={loading}
-                className="rounded-2xl bg-gradient-to-r from-cyan-400 to-violet-500 px-5 py-3 text-sm font-semibold text-slate-950 transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                {loading ? "Searching..." : "Search"}
-              </button>
-              {builtQuery && (
-                <p className="text-sm text-slate-400">
-                  Query sent: <span className="text-slate-200">{builtQuery}</span>
-                </p>
-              )}
-            </div>
-
-            {error && (
-              <p className="mt-4 rounded-2xl border border-red-400/20 bg-red-400/10 px-4 py-3 text-sm text-red-300">
-                {error}
-              </p>
-            )}
-
-            <div className="mt-6 flex flex-wrap gap-2">
-              {CHIPS.map((chip) => (
-                <button
-                  key={chip}
-                  onClick={() => handleChipToggle(chip)}
-                  className={`rounded-full border px-4 py-2 text-xs font-semibold uppercase tracking-[0.2em] transition-all ${
-                    activeChip === chip
-                      ? "border-cyan-300 bg-cyan-300 text-slate-950"
-                      : "border-white/10 bg-white/5 text-slate-300 hover:border-white/20 hover:bg-white/10"
-                  }`}
-                >
-                  {chip}
-                </button>
-              ))}
-            </div>
+            <button
+              onClick={handleSearch}
+              disabled={loading}
+              className="rounded-2xl bg-gradient-to-r from-cyan-400 to-violet-500 px-6 py-3.5 text-sm font-semibold text-slate-950 transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {loading ? "Searching..." : "Search"}
+            </button>
           </div>
 
-          <div className="grid gap-4 self-end">
-            {stats.map((stat) => (
-              <div key={stat.label} className="rounded-3xl border border-white/10 bg-black/20 p-5 backdrop-blur-sm">
-                <p className="text-sm text-slate-400">{stat.label}</p>
-                <p className={`mt-2 text-3xl font-semibold ${stat.tone}`}>{stat.value}</p>
+          {error && (
+            <p className="rounded-2xl border border-red-400/20 bg-red-400/10 px-4 py-3 text-sm text-red-300">
+              {error}
+            </p>
+          )}
+
+          {/* Live Recommendation Grid (Compact Layout directly under search) */}
+          <div className="mt-4">
+            <div className="mb-3 flex items-center justify-between">
+              <h2 className="text-xs font-semibold uppercase tracking-[0.28em] text-slate-400">
+                Live Recommendations
+              </h2>
+              <span className="text-xs text-slate-500">{recommendations.length} results</span>
+            </div>
+
+            {loading ? (
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                {Array.from({ length: 3 }).map((_, index) => (
+                  <RecommendationSkeleton key={index} />
+                ))}
               </div>
-            ))}
+            ) : recommendations.length > 0 ? (
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                {recommendations.map((item, index) => (
+                  <RecommendationCard
+                    key={item.videoId || item.title || index}
+                    item={item}
+                    onWatch={handleWatch}
+                    onFeedback={handleFeedback}
+                    watchPending={watchedVideoId === (item.videoId || item.title)}
+                    feedbackPending={feedbackVideoId === (item.videoId || item.title)}
+                  />
+                ))}
+              </div>
+            ) : (
+              <div className="rounded-[28px] border border-dashed border-white/10 bg-slate-950/40 p-6 text-center">
+                <p className="text-sm font-semibold text-slate-200">
+                  {hasSearched
+                    ? "No recommendations found for this search."
+                    : isProfileEmpty
+                    ? "Start searching to build your profile."
+                    : "Search for entertainment preferences to generate AI recommendations."}
+                </p>
+                <p className="mt-1 text-xs text-slate-400">
+                  {hasSearched
+                    ? "Try adjusting your search terms or preferences to get matches."
+                    : isProfileEmpty
+                    ? "We'll build your profile automatically from your search terms, watch actions, and likes/dislikes."
+                    : "We'll combine your profile, mood, creators, and watch history into a personalized result set."}
+                </p>
+              </div>
+            )}
           </div>
+
+          {/* Chips Row below Results (max 6-8 chips visible) */}
+          {profileChips.length > 0 && (
+            <div className="pt-2 border-t border-white/5">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-slate-500 mb-2">
+                Quick Filters
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {profileChips.slice(0, 8).map((chip) => (
+                  <button
+                    key={chip}
+                    onClick={() => handleChipToggle(chip)}
+                    className={`rounded-full border px-3.5 py-1.5 text-[11px] font-semibold uppercase tracking-[0.15em] transition-all ${
+                      activeChip === chip
+                        ? "border-cyan-300 bg-cyan-300 text-slate-950"
+                        : "border-white/10 bg-white/5 text-slate-300 hover:border-white/20 hover:bg-white/10"
+                    }`}
+                  >
+                    {chip}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       </section>
 
-      <section className="grid gap-6 xl:grid-cols-[0.75fr_1.25fr]">
+      {/* Lower Section: Preference Pulse (Left) & Profile Stats (Right) */}
+      <section className="grid gap-6 md:grid-cols-[1fr_1fr]">
+        {/* Preference Pulse */}
         <div className="rounded-[28px] border border-white/10 bg-slate-900/70 p-6 shadow-xl shadow-black/20">
           <div className="flex items-center justify-between">
             <h2 className="text-sm font-semibold uppercase tracking-[0.28em] text-slate-300">
@@ -507,43 +615,27 @@ function Dashboard() {
           </div>
         </div>
 
-        <div>
-          <div className="mb-4 flex items-center justify-between">
-            <h2 className="text-sm font-semibold uppercase tracking-[0.28em] text-slate-300">
-              Recommended for You
+        {/* Analytics Section beside Preference Pulse */}
+        <div className="rounded-[28px] border border-white/10 bg-slate-900/70 p-6 shadow-xl shadow-black/20 flex flex-col justify-between">
+          <div>
+            <h2 className="text-sm font-semibold uppercase tracking-[0.28em] text-slate-300 mb-4">
+              Profile Analytics
             </h2>
-            <span className="text-xs text-slate-500">{recommendations.length} results</span>
+            <div className="grid gap-4 sm:grid-cols-3">
+              {stats.map((stat) => (
+                <div key={stat.label} className="rounded-2xl border border-white/10 bg-black/20 p-5 backdrop-blur-sm">
+                  <p className="text-xs text-slate-400">{stat.label}</p>
+                  <p className={`mt-2 text-2xl font-bold ${stat.tone}`}>{stat.value}</p>
+                </div>
+              ))}
+            </div>
           </div>
-
-          {loading ? (
-            <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
-              {Array.from({ length: 3 }).map((_, index) => (
-                <RecommendationSkeleton key={index} />
-              ))}
-            </div>
-          ) : recommendations.length > 0 ? (
-            <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
-              {recommendations.map((item, index) => (
-                <RecommendationCard
-                  key={item.videoId || item.title || index}
-                  item={item}
-                  onWatch={handleWatch}
-                  onFeedback={handleFeedback}
-                  watchPending={watchedVideoId === (item.videoId || item.title)}
-                  feedbackPending={feedbackVideoId === (item.videoId || item.title)}
-                />
-              ))}
-            </div>
-          ) : (
-            <div className="rounded-[28px] border border-dashed border-white/10 bg-slate-900/40 p-8 text-center">
-              <p className="text-lg font-semibold text-slate-200">
-                Search for entertainment preferences to generate AI recommendations.
-              </p>
-              <p className="mt-2 text-sm text-slate-400">
-                We&apos;ll combine your profile, mood, creators, and watch history into a personalized result set.
-              </p>
-            </div>
-          )}
+          <div className="mt-6 rounded-2xl border border-white/5 bg-white/5 p-4 text-xs text-slate-400">
+            <p className="font-semibold uppercase tracking-wider text-cyan-300 mb-1">
+              Active Discovery Sync
+            </p>
+            Your search history, feedback logs, and watch sessions are analyzed locally in real-time to compute your current Preference Pulse.
+          </div>
         </div>
       </section>
     </div>

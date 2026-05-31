@@ -1,7 +1,7 @@
 const path = require("path");
 require("dotenv").config();
 
-const { interpretWithGemini } = require("./services/geminiService");
+const { interpretWithGemini } = require("../services/geminiService");
 
 async function runTest(query) {
     console.log("----------------------------------------");
